@@ -1,0 +1,20 @@
+services:
+  support-bot:
+    build: .
+    container_name: remnawave-support-bot
+    restart: always
+    env_file:
+      - .env
+    environment:
+      - TZ=Europe/Moscow
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./:/app
+      - /opt/backups_archive:/backups_archive:ro
+    networks:
+      - remnawave_network
+
+networks:
+  remnawave_network:
+    external: true
+    name: ${EXTERNAL_NETWORK_NAME:-remnawave_default}

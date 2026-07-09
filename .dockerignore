@@ -1,0 +1,10 @@
+.env
+.git
+.gitignore
+__pycache__/
+*.pyc
+support.db
+bot.log
+bot.log.*
+*.tar.gz
+README.md

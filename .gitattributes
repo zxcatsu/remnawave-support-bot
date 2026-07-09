@@ -1,0 +1,6 @@
+# Держим шелл-скрипты и конфиги в LF, чтобы не ломались на Linux/в Docker
+*.sh   text eol=lf
+*.py   text eol=lf
+*.yml  text eol=lf
+Dockerfile text eol=lf
+.env.example text eol=lf

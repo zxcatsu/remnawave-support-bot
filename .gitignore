@@ -1,0 +1,6 @@
+.env
+support.db
+__pycache__/
+*.tar.gz
+bot.log
+bot.log.*
