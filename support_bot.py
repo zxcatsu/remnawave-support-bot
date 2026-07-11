@@ -132,11 +132,40 @@ def run_query(query, params=(), fetch=False, fetchall=False):
 
 def init_db():
     run_query("CREATE TABLE IF NOT EXISTS users (uid INTEGER PRIMARY KEY, is_banned INTEGER DEFAULT 0, ban_reason TEXT, state TEXT DEFAULT '')")
-    run_query("CREATE TABLE IF NOT EXISTS tickets (ticket_id TEXT PRIMARY KEY, uid INTEGER, thread_id INTEGER, status TEXT DEFAULT 'open', created_at REAL, last_activity REAL)")
+    run_query("CREATE TABLE IF NOT EXISTS tickets (ticket_id TEXT PRIMARY KEY, uid INTEGER, thread_id INTEGER, status TEXT DEFAULT 'open', created_at REAL, last_activity REAL, title_base TEXT)")
+    # Миграция: у баз, созданных до добавления тега пользователя в топик, нет колонки title_base.
+    try:
+        run_query("ALTER TABLE tickets ADD COLUMN title_base TEXT")
+    except sqlite3.OperationalError:
+        pass  # колонка уже существует
     # Отзывы на модерации хранятся в БД, чтобы переживать рестарт контейнера.
     run_query("CREATE TABLE IF NOT EXISTS pending_reviews (uid INTEGER PRIMARY KEY, text TEXT, created_at REAL)")
 
 init_db()
+
+# --- ТЕГ ПОЛЬЗОВАТЕЛЯ И СТАТУС ТИКЕТА В НАЗВАНИИ ТЕМЫ ---
+def build_user_tag(user):
+    """Возвращает @username, если он есть, иначе ID пользователя."""
+    if getattr(user, "username", None):
+        return f"@{user.username}"
+    return f"id{user.id}"
+
+def build_topic_title(title_base, status="open"):
+    """Собирает название темы: иконка статуса + t_id + имя + тег пользователя."""
+    icon = "🟢" if status == "open" else "🔒"
+    return f"{icon} {title_base}"
+
+def close_ticket_topic(thread_id, title_base=None):
+    """Закрывает тему форума и переименовывает её, чтобы статус был виден в списке тем."""
+    if title_base:
+        try:
+            bot.edit_forum_topic(ADMIN_GROUP_ID, thread_id, name=build_topic_title(title_base, "closed"))
+        except Exception as e:
+            logger.warning(f"Не удалось переименовать тему {thread_id} при закрытии: {e}")
+    try:
+        bot.close_forum_topic(ADMIN_GROUP_ID, thread_id)
+    except Exception as e:
+        logger.warning(f"Не удалось закрыть тему {thread_id}: {e}")
 
 # --- ОТЗЫВЫ НА МОДЕРАЦИИ (SQLite) ---
 def save_pending_review(uid, text):
@@ -268,10 +297,10 @@ def handle_callbacks(call):
     # 4. Закрытие тикета админом (из оригинального кода)
     elif call.data.startswith("force_close_"):
         target_uid = int(call.data.split("_")[2])
-        ticket = run_query("SELECT thread_id, ticket_id FROM tickets WHERE uid=? AND status='open'", (target_uid,), fetch=True)
+        ticket = run_query("SELECT thread_id, ticket_id, title_base FROM tickets WHERE uid=? AND status='open'", (target_uid,), fetch=True)
         if ticket:
             run_query("UPDATE tickets SET status='closed' WHERE uid=? AND status='open'", (target_uid,))
-            bot.close_forum_topic(ADMIN_GROUP_ID, ticket[0])
+            close_ticket_topic(ticket[0], ticket[2])
             bot.send_message(target_uid, "🔒 Ваш тикет был закрыт поддержкой.", reply_markup=get_main_menu())
             bot.answer_callback_query(call.id, "Тикет закрыт")
 
@@ -284,11 +313,11 @@ def handle_callbacks(call):
         run_query("UPDATE users SET is_banned=1, ban_reason=? WHERE uid=?", ("Забанен через поддержку", target_uid))
 
         # Закрываем открытый тикет, если есть
-        ticket = run_query("SELECT thread_id FROM tickets WHERE uid=? AND status='open'", (target_uid,), fetch=True)
+        ticket = run_query("SELECT thread_id, title_base FROM tickets WHERE uid=? AND status='open'", (target_uid,), fetch=True)
         if ticket:
             run_query("UPDATE tickets SET status='closed' WHERE uid=? AND status='open'", (target_uid,))
             try:
-                bot.close_forum_topic(ADMIN_GROUP_ID, ticket[0])
+                close_ticket_topic(ticket[0], ticket[1])
             except Exception as e:
                 log_to_topic(f"⚠️ Не удалось закрыть тему при бане <code>{target_uid}</code>: {html.escape(str(e))}")
 
@@ -337,7 +366,7 @@ def handle_private(message):
     if row and row[0] == 1: return
     
     current_state = row[1] if row else ""
-    ticket = run_query("SELECT ticket_id, thread_id FROM tickets WHERE uid=? AND status='open'", (uid,), fetch=True)
+    ticket = run_query("SELECT ticket_id, thread_id, title_base FROM tickets WHERE uid=? AND status='open'", (uid,), fetch=True)
 
     # Кнопка главного меню «Отзывы»
     if message.text == "⭐ Отзывы":
@@ -384,22 +413,27 @@ def handle_private(message):
         t_id = f"T-{date_prefix}-{count + 1}"
         
         user_info = get_remnawave_info(uid)
+        display_name = message.from_user.first_name or str(uid)
+        user_tag = build_user_tag(message.from_user)
+        title_base = f"{t_id} | {display_name} ({user_tag})"
         
         try:
-            topic = bot.create_forum_topic(ADMIN_GROUP_ID, f"⏳ {t_id} | {message.from_user.first_name}")
+            topic = bot.create_forum_topic(ADMIN_GROUP_ID, build_topic_title(title_base, "open"))
             bot.send_message(
                 ADMIN_GROUP_ID, 
                 f"🆕 <b>Новое обращение: {t_id}</b>\n"
-                f"👤 От: {html.escape(message.from_user.first_name)} (ID: <code>{uid}</code>)\n\n"
-                f"💳 <b>Данные подписки:</b>\n{user_info}",
+                f"👤 От: {html.escape(display_name)} ({html.escape(user_tag)}, ID: <code>{uid}</code>)\n\n"
+                f"💳 <b>Данные подписки:</b>\n{user_info}\n\n"
+                f"ℹ️ Ответьте (Reply) на сообщение клиента — тогда ответ уйдёт ему. "
+                f"Сообщение без Reply останется внутренней заметкой и клиенту не покажется.",
                 message_thread_id=topic.message_thread_id, 
                 parse_mode="HTML", 
                 reply_markup=get_admin_buttons(uid)
             )
-            run_query("INSERT INTO tickets (ticket_id, uid, thread_id, status, created_at, last_activity) VALUES (?, ?, ?, 'open', ?, ?)",
-                      (t_id, uid, topic.message_thread_id, time.time(), time.time()))
+            run_query("INSERT INTO tickets (ticket_id, uid, thread_id, status, created_at, last_activity, title_base) VALUES (?, ?, ?, 'open', ?, ?, ?)",
+                      (t_id, uid, topic.message_thread_id, time.time(), time.time(), title_base))
             bot.send_message(message.chat.id, "✅ Тикет открыт. Напишите ваш вопрос.", reply_markup=get_active_menu())
-            logger.info(f"Открыт тикет {t_id} (uid={uid})")
+            logger.info(f"Открыт тикет {t_id} (uid={uid}, tag={user_tag})")
         except Exception as e:
             bot.send_message(message.chat.id, "⚠️ Ошибка при создании тикета. Попробуйте позже.")
             log_to_topic(f"⚠️ Ошибка создания тикета для <code>{uid}</code>: {html.escape(str(e))}")
@@ -407,7 +441,7 @@ def handle_private(message):
     elif message.text == "❌ Закрыть текущий тикет":
         if ticket:
             run_query("UPDATE tickets SET status='closed' WHERE uid=? AND status='open'", (uid,))
-            bot.close_forum_topic(ADMIN_GROUP_ID, ticket[1])
+            close_ticket_topic(ticket[1], ticket[2])
             bot.send_message(message.chat.id, "🏁 Тикет закрыт.", reply_markup=get_main_menu())
             logger.info(f"Пользователь uid={uid} закрыл свой тикет")
     else:
@@ -428,12 +462,31 @@ def handle_admin_reply(message):
         return
 
     ticket = run_query("SELECT uid FROM tickets WHERE thread_id=? AND status='open'", (message.message_thread_id,), fetch=True)
-    if ticket:
+    if not ticket:
+        return
+
+    reply = message.reply_to_message
+    is_real_reply = (
+        reply is not None
+        and reply.message_id != message.message_thread_id
+        and (reply.from_user is None or reply.from_user.is_bot)
+    )
+
+    if is_real_reply:
         try:
             bot.copy_message(ticket[0], ADMIN_GROUP_ID, message.message_id)
             run_query("UPDATE tickets SET last_activity=? WHERE thread_id=? AND status='open'", (time.time(), message.message_thread_id))
+            try:
+                bot.set_message_reaction(ADMIN_GROUP_ID, message.message_id, reaction=[types.ReactionTypeEmoji(emoji="👍")])
+            except Exception as e:
+                logger.warning(f"Не удалось поставить реакцию-подтверждение (thread={message.message_thread_id}): {e}")
         except Exception as e:
             logger.warning(f"Не удалось переслать ответ админа в тикет (thread={message.message_thread_id}): {e}")
+    else:
+        try:
+            bot.set_message_reaction(ADMIN_GROUP_ID, message.message_id, reaction=[types.ReactionTypeEmoji(emoji="✍")])
+        except Exception as e:
+            logger.warning(f"Не удалось поставить реакцию-заметку (thread={message.message_thread_id}): {e}")
 
 # --- АВТОЗАКРЫТИЕ НЕАКТИВНЫХ ТИКЕТОВ ---
 def auto_close_worker():
@@ -449,15 +502,12 @@ def auto_close_worker():
         try:
             threshold = time.time() - AUTO_CLOSE_HOURS * 3600
             stale = run_query(
-                "SELECT ticket_id, uid, thread_id FROM tickets WHERE status='open' AND last_activity < ?",
+                "SELECT ticket_id, uid, thread_id, title_base FROM tickets WHERE status='open' AND last_activity < ?",
                 (threshold,), fetchall=True
             ) or []
-            for ticket_id, uid, thread_id in stale:
+            for ticket_id, uid, thread_id, title_base in stale:
                 run_query("UPDATE tickets SET status='closed' WHERE ticket_id=?", (ticket_id,))
-                try:
-                    bot.close_forum_topic(ADMIN_GROUP_ID, thread_id)
-                except Exception as e:
-                    logger.warning(f"Не удалось закрыть тему {thread_id} при автозакрытии: {e}")
+                close_ticket_topic(thread_id, title_base)
                 try:
                     bot.send_message(uid, "🔒 Ваш тикет был автоматически закрыт из-за отсутствия активности.", reply_markup=get_main_menu())
                 except Exception as e:
