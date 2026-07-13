@@ -4,3 +4,6 @@ __pycache__/
 *.tar.gz
 bot.log
 bot.log.*
+# медиа-баннеры (добавьте свои файлы в assets/ локально)
+assets/*
+!assets/.gitkeep
