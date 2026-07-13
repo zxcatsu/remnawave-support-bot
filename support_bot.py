@@ -185,6 +185,11 @@ def init_db():
     except sqlite3.OperationalError:
         pass
     run_query("CREATE TABLE IF NOT EXISTS pending_reviews (uid INTEGER PRIMARY KEY, text TEXT, created_at REAL)")
+    # Миграция: добавляем колонку first_name если её ещё нет
+    try:
+        run_query("ALTER TABLE pending_reviews ADD COLUMN first_name TEXT")
+    except sqlite3.OperationalError:
+        pass
     run_query("CREATE TABLE IF NOT EXISTS media_cache (key TEXT PRIMARY KEY, file_id TEXT)")
 
 init_db()
@@ -305,13 +310,15 @@ def close_ticket_topic(thread_id, title_base=None):
 # ОТЗЫВЫ (SQLite)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def save_pending_review(uid, text):
-    run_query("INSERT OR REPLACE INTO pending_reviews (uid, text, created_at) VALUES (?, ?, ?)",
-              (uid, text, time.time()))
+def save_pending_review(uid, text, first_name):
+    run_query("INSERT OR REPLACE INTO pending_reviews (uid, text, created_at, first_name) VALUES (?, ?, ?, ?)",
+              (uid, text, time.time(), first_name))
 
 def get_pending_review(uid):
-    row = run_query("SELECT text FROM pending_reviews WHERE uid=?", (uid,), fetch=True)
-    return row[0] if row else None
+    row = run_query("SELECT text, first_name FROM pending_reviews WHERE uid=?", (uid,), fetch=True)
+    if not row:
+        return None, None
+    return row[0], row[1]
 
 def delete_pending_review(uid):
     run_query("DELETE FROM pending_reviews WHERE uid=?", (uid,))
@@ -521,13 +528,16 @@ def handle_callbacks(call):
 
     if data.startswith("rev_approve_"):
         target_uid  = int(data.split("_")[2])
-        review_text = get_pending_review(target_uid)
+        review_text, first_name = get_pending_review(target_uid)
         if not review_text:
             bot.answer_callback_query(call.id, "Отзыв не найден (уже обработан).", show_alert=True)
             return
         try:
+            author = html.escape(first_name) if first_name else "Пользователь"
             bot.send_message(REVIEWS_CHANNEL,
-                             f"⭐️ <b>Новый отзыв о {PROJECT_NAME}!</b>\n\n{html.escape(review_text)}",
+                             f"⭐️ <b>Новый отзыв о {PROJECT_NAME}!</b>\n\n"
+                             f"{html.escape(review_text)}\n\n"
+                             f"— <i>{author}</i>",
                              parse_mode="HTML")
             bot.edit_message_text(
                 f"✅ <b>Одобрен и опубликован!</b>\n\n<i>{html.escape(review_text)}</i>",
@@ -542,7 +552,8 @@ def handle_callbacks(call):
 
     if data.startswith("rev_decline_"):
         target_uid  = int(data.split("_")[2])
-        review_text = get_pending_review(target_uid) or "Текст утерян"
+        review_text, _ = get_pending_review(target_uid)
+        review_text = review_text or "Текст утерян"
         bot.edit_message_text(
             f"❌ <b>Отклонён.</b>\n\n<s>{html.escape(review_text)}</s>",
             chat_id=ADMIN_GROUP_ID, message_id=call.message.message_id, parse_mode="HTML")
@@ -691,7 +702,7 @@ def handle_private(message):
             run_query("UPDATE users SET state='' WHERE uid=?", (uid,))
             return send_section(message.chat.id, load_text(MENU_TEXT_FILE), kb_main(), MENU_MEDIA)
 
-        save_pending_review(uid, message.text)
+        save_pending_review(uid, message.text, message.from_user.first_name)
         run_query("UPDATE users SET state='' WHERE uid=?", (uid,))
         try:
             bot.send_message(
