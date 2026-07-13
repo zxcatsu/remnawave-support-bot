@@ -4,7 +4,7 @@
 
 **Телеграм-бот техподдержки для VPN-панелей на базе [RemnaWave](https://remna.st/)**
 
-Тикеты · карточка клиента · отзывы · автозакрытие · баны · кастомные баннеры и тексты · premium emoji
+Тикеты · карточка клиента · отзывы · автозакрытие · баны · кастомные баннеры и тексты
 
 [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white)](https://docs.docker.com/compose/)
@@ -20,8 +20,7 @@
 | | |
 |---|---|
 | 🖼️ **Баннеры** | Фото / GIF / видео для каждого раздела (меню, FAQ, отзывы, тикет). Общий MENU_MEDIA — fallback для всех. |
-| 📝 **Текстовые файлы** | `texts/*.txt` — HTML + premium emoji. Редактируйте без перезапуска бота. |
-| 💎 **Premium Emoji** | В текстах и названиях кнопок: `<tg-emoji emoji-id="...">` |
+| 📝 **Текстовые файлы** | `texts/*.txt` — HTML-разметка. Редактируйте без перезапуска бота. |
 | 🔌 **Тариф из RemnaWave** | Карточка клиента: статус, **тариф**, дата, трафик (из Postgres панели). |
 | 💬 **Forums / Topics** | Каждый тикет — отдельная тема в группе с карточкой и inline-кнопками. |
 | ⭐ **Отзывы с модерацией** | Отзыв → одобрить/отклонить → публикация в канал. Хранятся в SQLite. |
@@ -75,7 +74,7 @@ TICKET_MEDIA=assets/ticket.mp4
 
 ---
 
-## 📝 Тексты и Premium Emoji
+## 📝 Тексты
 
 Все тексты живут в папке `texts/` — правьте без перезапуска бота:
 
@@ -86,13 +85,11 @@ texts/reviews.txt   # раздел отзывов
 texts/ticket.txt    # экран открытия тикета
 ```
 
-HTML-теги Telegram и premium emoji поддерживаются везде:
+HTML-теги Telegram поддерживаются везде:
 ```html
 👋 <b>Добро пожаловать!</b>
-<tg-emoji emoji-id="5432289740098201671">✨</tg-emoji> VIP-поддержка
+✨ VIP-поддержка
 ```
-
-ID premium emoji → [@getidsbot](https://t.me/getidsbot)
 
 ---
 
