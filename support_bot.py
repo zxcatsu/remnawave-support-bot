@@ -638,10 +638,18 @@ def _open_ticket(chat_id, tg_user):
             f"🆕 <b>Новое обращение: {t_id}</b>\n"
             f"👤 От: {html.escape(display_name)} ({html.escape(user_tag)}, ID: <code>{uid}</code>)\n\n"
             f"💳 <b>Подписка:</b>\n{user_info}\n\n"
-            f"ℹ️ Reply на сообщение клиента → ответ уйдёт ему. Без Reply — внутренняя заметка.",
+            f"ℹ️ Reply на любое сообщение бота в этом треде → ответ уйдёт клиенту. Без Reply — внутренняя заметка.",
             message_thread_id=topic.message_thread_id,
             parse_mode="HTML",
             reply_markup=kb_admin(uid),
+        )
+        # Отдельное сообщение-якорь — чтобы поддержка могла написать первой,
+        # сделав Reply на него ещё до того как клиент что-либо напишет.
+        bot.send_message(
+            ADMIN_GROUP_ID,
+            f"💬 <i>Ожидаем сообщения от клиента. Чтобы написать первым — сделайте Reply на это сообщение.</i>",
+            message_thread_id=topic.message_thread_id,
+            parse_mode="HTML",
         )
         run_query(
             "INSERT INTO tickets (ticket_id, uid, thread_id, status, created_at, last_activity, title_base) "
