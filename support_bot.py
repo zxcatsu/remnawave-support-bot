@@ -212,12 +212,13 @@ _TEXT_DEFAULTS = {
 }
 
 def load_text(filepath):
-    """Читает текст из файла. Если файл не найден — возвращает дефолт."""
+    """Читает текст из файла, подставляет {PROJECT_NAME} и другие переменные."""
     try:
         with open(filepath, encoding='utf-8') as f:
-            return f.read().strip()
+            text = f.read().strip()
     except FileNotFoundError:
-        return _TEXT_DEFAULTS.get(filepath, "")
+        text = _TEXT_DEFAULTS.get(filepath, "")
+    return text.replace("{PROJECT_NAME}", PROJECT_NAME)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # МЕДИА: определение типа и отправка
